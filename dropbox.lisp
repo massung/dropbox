@@ -1,4 +1,4 @@
-;;;; Dropbox REST API for LispWorks
+;;;; Dropbox API for LispWorks
 ;;;;
 ;;;; Copyright (c) 2013 by Jeffrey Massung
 ;;;;
@@ -80,10 +80,6 @@
   ()
   (:documentation "Revision metadata."))
 
-(defmethod auth-header ((token access-token))
-  "Create an authorization header for all REST API end-point requests."
-  (list "Authorization" (format nil "~@(~a~) ~a" (access-token-type token) (access-token token))))
-
 (defconstant +auth-url+ "https://www.dropbox.com/1/oauth2/authorize"
   "End-point for requesting an authorization token.")
 (defconstant +token-url+ "https://api.dropbox.com/1/oauth2/token"
@@ -93,12 +89,19 @@
 (defconstant +content-url+ "https://api-content.dropbox.com"
   "End-point domain for all API content calls.")
 
-(defun parse-json-response (resp type)
-  "Perform an HTTP request, and if successful, parse the JSON body."
+(defun auth-header (token)
+  "Create an authorization header for all REST API end-point requests."
+  (list "Authorization" (format nil "~@(~a~) ~a" (access-token-type token) (access-token token))))
+
+(defun parse-json-response (type resp)
+  "Decode a JSON response into a type."
   (when (= (response-code resp) 200)
-    (let ((json (json-decode (response-body resp) (request-url (response-request resp)))))
-      (when json
-        (json-decode-into json type)))))
+    (json-decode-into type (response-body resp) (request-url (response-request resp)))))
+
+(defun dropbox-request (type method url token)
+  "Perform an HTTP request, and if successful, parse the JSON body."
+  (let ((req (make-instance 'request :url url :method method :headers (list (auth-header token)))))
+    (parse-json-response type (http-perform req))))
 
 (defun dropbox-request-token (key)
   "Open the Dropbox authorization end-point to get a request token."
@@ -107,14 +110,14 @@
 
 (defun dropbox-request-access (key secret token)
   "Perform the POST request to obtain the access token."
-  (with-url (url +token-url+ :auth (list key secret) :query `(("grant_type" "authorization_code")
-                                                              ("code" ,token)))
-    (parse-json-response (http-post url) 'access-token)))
+  (let ((qs `(("grant_type" "authorization_code") ("code" ,token))))
+    (with-url (url +token-url+ :auth (list key secret) :query qs)
+      (parse-json-response 'access-token (http-post url)))))
 
 (defun dropbox-account-info (token)
   "Perform a GET to /account/info."
   (with-url (url +api-url+ :path "/1/account/info")
-    (parse-json-response (http-get url :headers (list (auth-header token))) 'account-info)))
+    (dropbox-request 'account-info "GET" url token)))
 
 (defun dropbox-files (token &key (root "dropbox") (path "/"))
   "Perform a GET to /1/files/<root>/<path>."
@@ -124,9 +127,9 @@
 (defun dropbox-metadata (token &key (root "dropbox") (path "/"))
   "Fetch the metadata for a give file or folder."
   (with-url (url +api-url+ :path (format nil "/1/metadata/~a~a" root path))
-    (parse-json-response (http-get url :headers (list (auth-header token))) 'metadata)))
+    (dropbox-request 'metadata "GET" url token)))
 
 (defun dropbox-revisions (token &key (root "dropbox") (path "/"))
   "Obtains metadata for the previous revisions of a file."
   (with-url (url +api-url+ :path (format nil "/1/revisions/~a~a" root path))
-    (parse-json-response (http-get url :headers (list (auth-header token))) 'revision)))
+    (dropbox-request 'revision "GET" url token)))
