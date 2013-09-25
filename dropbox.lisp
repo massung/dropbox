@@ -40,6 +40,7 @@
    #:dropbox-media
    #:dropbox-metadata
    #:dropbox-move
+   #:dropbox-restore
    #:dropbox-revisions
    #:dropbox-shares
    #:dropbox-thumbnails
@@ -88,7 +89,7 @@
 (define-condition dropbox-error (error)
   ((|error| :reader dropbox-error))
   (:report (lambda (c stream)
-             (format stream "Dropbox error: ~s" (dropbox-error c)))))
+             (write-string (dropbox-error c) stream))))
 
 (defvar *app-key* nil
   "The App Key for your application. Provided by Dropbox.")
@@ -156,7 +157,8 @@
 
 (defun end-point (api &optional path)
   "Create the path end-point for any given API call."
-  (format nil "/1/~a~:[~;/~(~a~)~a~]" api path *app-root* path))
+  (let ((rel-path (string-trim "/" path)))
+    (format nil "/1/~a~:[~;/~(~a~)~:[~;/~a~]~]" api path *app-root* path rel-path)))
 
 (defun query-params (params)
   "Create a list of query parameters from keywords and value."
@@ -210,27 +212,34 @@
     (with-url (url +api-url+ :path (end-point "/fileops/delete") :query query)
       (dropbox-request 'metadata "POST" url token))))
 
-(defun dropbox-files-get (token path)
+(defun dropbox-files-get (token path &rest params &key rev)
   "Perform a GET on a file."
-  (with-url (url +content-url+ :path (end-point "files" path))
+  (declare (ignore rev))
+  (with-url (url +content-url+ :path (end-point "files" path) :query (query-params params))
     (let ((resp (http-get url :headers (list (auth-header token)))))
       (when (= (response-code resp) 200)
-        (response-body resp)))))
+        (with-headers ((metadata "x-dropbox-metadata"))
+            (response-headers resp)
+          (values (response-body resp)
+                  (when metadata
+                    (json-decode-into 'metadata metadata))))))))
 
 (defun dropbox-files-put (token path data &rest params &key overwrite parent_rev locale)
   "Uploads a file."
-  (declare (ignorable overwrite parent_rev locale))
+  (declare (ignore overwrite parent_rev locale))
   (with-url (url +content-url+ :path (end-point "files_put" path) :query (query-params params))
     (dropbox-request 'metadata "PUT" url token :data data)))
 
-(defun dropbox-media (token path)
+(defun dropbox-media (token path &rest params &key locale)
   "Returns a direct link to a file."
-  (with-url (url +api-url+ :path (end-point "media" path))
+  (declare (ignore locale))
+  (with-url (url +api-url+ :path (end-point "media" path) :query (query-params params))
     (dropbox-request 'media "POST" url token)))
 
-(defun dropbox-metadata (token path)
+(defun dropbox-metadata (token path &rest params &key file_limit hash list include_deleted rev locale)
   "Fetch the metadata for a give file or folder."
-  (with-url (url +api-url+ :path (end-point "metadata" path))
+  (declare (ignore file_limit hash list include_deleted rev locale))
+  (with-url (url +api-url+ :path (end-point "metadata" path) :query (query-params params))
     (dropbox-request 'metadata "GET" url token)))
 
 (defun dropbox-move (token from-path to-path)
@@ -239,18 +248,32 @@
     (with-url (url +api-url+ :path (end-point "/fileops/move") :query query)
       (dropbox-request 'metadata "POST" url token))))
 
-(defun dropbox-revisions (token path)
+(defun dropbox-restore (token path rev &rest params &key locale)
+  "Restore a file path to a previous revision."
+  (declare (ignore locale))
+    (with-url (url +api-url+ :path (end-point "restore" path) :query (query-params `("rev" ,rev ,@params)))
+      (dropbox-request 'metadata "POST" url token)))
+
+(defun dropbox-revisions (token path &rest params &key rev_limit locale)
   "Obtains metadata for the previous revisions of a file."
-  (with-url (url +api-url+ :path (end-point "revisions" path))
+  (declare (ignore rev_limit locale))
+  (with-url (url +api-url+ :path (end-point "revisions" path) :query (query-params params))
     (dropbox-request 'metadata "GET" url token)))
 
-(defun dropbox-shares (token path)
+(defun dropbox-shares (token path &rest params &key locale short_url)
   "Creates and returns a Dropbox link to files or folders."
-  (with-url (url +api-url+ :path (end-point "shares" path))
+  (declare (ignore locale short_url))
+  (with-url (url +api-url+ :path (end-point "shares" path) :query (query-params params))
     (dropbox-request 'media "POST" url token)))
 
-(defun dropbox-thumbnails (token path &rest params &key (format "jpeg") (size "s"))
+(defun dropbox-thumbnails (token path &rest params &key format size)
   "Gets a thumbnail image."
   (declare (ignorable format size))
   (with-url (url +content-url+ :path (end-point "thumbnails" path) :query (query-params params))
-    (http-get url :headers (list (auth-header token)))))
+    (let ((resp (http-get url :headers (list (auth-header token)))))
+      (if (= (response-code resp) 200)
+          (with-headers ((metadata "x-dropbox-metadata"))
+              (response-headers resp)
+            (let ((bytes (map '(vector (unsigned-byte 8)) #'char-code (response-body resp))))
+              (values bytes (json-decode-into 'metadata metadata))))
+        (error (json-decode-into 'dropbox-error (response-body resp)))))))
