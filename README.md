@@ -87,6 +87,14 @@ Called with the token provided by Dropbox and pasted into your application by th
 
 Returns an `account-info` object containing ingormation about the Dropbox user (name, email, etc).
 
+	(dropbox-copy token from to-path &key locale)
+
+Copies a file or folder from a path or `copy-ref` object to another path.
+
+	(dropbox-copy-ref token path)
+
+Returns a `copy-ref` object to use with `dropbox-copy`.
+
 	(dropbox-create-folder token path)
 
 Recursively creates a folder. Returns the `metadata` object for the newly created folder.
@@ -122,6 +130,10 @@ Restores a file to a previous revision (obtained via the `metadata-rev` slot in 
 	(dropbox-revisions token path &key rev_limit locale)
 
 Returns an array of `metadata` objects for all the revisions for a given file or path.
+
+	(dropbox-search token path query &key file_limit include_deleted locale)
+
+Returns an array of `metadata` entires for any filename or folder that matches the query string.
 
 	(dropbox-shares token path &key short_url locale)
 

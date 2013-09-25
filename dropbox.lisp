@@ -33,6 +33,8 @@
 
    ;; REST API end-points
    #:dropbox-account-info
+   #:dropbox-copy
+   #:dropbox-copy-ref
    #:dropbox-create-folder
    #:dropbox-delete
    #:dropbox-files-get
@@ -42,6 +44,7 @@
    #:dropbox-move
    #:dropbox-restore
    #:dropbox-revisions
+   #:dropbox-search
    #:dropbox-shares
    #:dropbox-thumbnails
    
@@ -57,6 +60,10 @@
    #:account-info-country
    #:account-info-quota
    #:account-info-email
+
+   ;; copy ref readers
+   #:copy-ref
+   #:copy-ref-expires
 
    ;; media readers
    #:media-url
@@ -119,6 +126,11 @@
    (|quota_info|    :reader account-info-quota :type quota-info)
    (|email|         :reader account-info-email))
   (:documentation "Account information."))
+
+(defclass copy-ref ()
+  ((|copy_ref| :reader copy-ref)
+   (|expires|  :reader copy-ref-expires))
+  (:documentation "Copy reference."))
 
 (defclass media ()
   ((|url|     :reader media-url)
@@ -200,6 +212,21 @@
   (with-url (url +api-url+ :path (end-point "account/info"))
     (dropbox-request 'account-info "GET" url token)))
 
+(defun dropbox-copy (token from to-path &rest params &key locale)
+  "Copies a file or folder to a new location."
+  (declare (ignore locale))
+  (let* ((from (if (stringp from)
+                   (list "from_path" from)
+                 (list "from_copy_ref" (copy-ref from))))
+         (query `(("root" ,(string-downcase *app-root*)) ("to_path" ,to-path) ,from ,@params)))
+    (with-url (url +api-url+ :path (end-point "fileops/copy") :query query)
+      (dropbox-request 'metadata "POST" url token))))
+
+(defun dropbox-copy-ref (token path)
+  "Returns a direct link to a file."
+  (with-url (url +api-url+ :path (end-point "copy_ref" path))
+    (dropbox-request 'copy-ref "GET" url token)))
+
 (defun dropbox-create-folder (token path)
   "Creates a folder."
   (let ((query `(("root" ,(string-downcase *app-root*)) ("path" ,path))))
@@ -258,6 +285,12 @@
   "Obtains metadata for the previous revisions of a file."
   (declare (ignore rev_limit locale))
   (with-url (url +api-url+ :path (end-point "revisions" path) :query (query-params params))
+    (dropbox-request 'metadata "GET" url token)))
+
+(defun dropbox-search (token path query &rest params &key file_limit include_deleted locale)
+  "Returns metadata for all files and folders whose filename contains the given search string."
+  (declare (ignore file_limit include_deleted locale))
+  (with-url (url +api-url+ :path (end-point "search" path) :query (query-params `("query" ,query ,@params)))
     (dropbox-request 'metadata "GET" url token)))
 
 (defun dropbox-shares (token path &rest params &key locale short_url)
