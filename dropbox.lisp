@@ -33,10 +33,13 @@
 
    ;; REST API end-points
    #:dropbox-account-info
+   #:dropbox-create-folder
+   #:dropbox-delete
    #:dropbox-files-get
    #:dropbox-files-put
    #:dropbox-media
    #:dropbox-metadata
+   #:dropbox-move
    #:dropbox-revisions
    #:dropbox-shares
    #:dropbox-thumbnails
@@ -138,14 +141,6 @@
    (|contents|     :reader metadata-contents :type metadata))
   (:documentation "Metadata for any content file or directory."))
 
-(defclass revision (metadata)
-  ()
-  (:documentation "Revision metadata."))
-
-(defclass shares (media)
-  ()
-  (:documentation "Shares result."))
-
 (defconstant +auth-url+ "https://www.dropbox.com/1/oauth2/authorize"
   "End-point for requesting an authorization token.")
 (defconstant +token-url+ "https://api.dropbox.com/1/oauth2/token"
@@ -163,6 +158,13 @@
   "Create the path end-point for any given API call."
   (format nil "/1/~a~:[~;/~(~a~)~a~]" api path *app-root* path))
 
+(defun query-params (params)
+  "Create a list of query parameters from keywords and value."
+  (loop :for key := (pop params)
+        :for value := (pop params)
+        :until (null key)
+        :collect (list (string-downcase key) value)))
+
 (defun parse-json-response (type resp)
   "Decode a JSON response into a type."
   (let ((body (response-body resp))
@@ -173,7 +175,11 @@
 
 (defun dropbox-request (type method url token &key data)
   "Perform an HTTP request, and if successful, parse the JSON body."
-  (let ((req (make-instance 'request :data data :url url :method method :headers (list (auth-header token)))))
+  (let ((req (make-instance 'request
+                            :data data
+                            :url url
+                            :method method
+                            :headers (list (auth-header token)))))
     (parse-json-response type (http-perform req))))
 
 (defun dropbox-request-token ()
@@ -192,6 +198,18 @@
   (with-url (url +api-url+ :path (end-point "account/info"))
     (dropbox-request 'account-info "GET" url token)))
 
+(defun dropbox-create-folder (token path)
+  "Creates a folder."
+  (let ((query `(("root" ,(string-downcase *app-root*)) ("path" ,path))))
+    (with-url (url +api-url+ :path (end-point "fileops/create_folder") :query query)
+      (dropbox-request 'metadata "POST" url token))))
+
+(defun dropbox-delete (token path)
+  "Deletes a file or folder."
+  (let ((query `(("root" ,(string-downcase *app-root*)) ("path" ,path))))
+    (with-url (url +api-url+ :path (end-point "/fileops/delete") :query query)
+      (dropbox-request 'metadata "POST" url token))))
+
 (defun dropbox-files-get (token path)
   "Perform a GET on a file."
   (with-url (url +content-url+ :path (end-point "files" path))
@@ -199,9 +217,10 @@
       (when (= (response-code resp) 200)
         (response-body resp)))))
 
-(defun dropbox-files-put (token path data)
+(defun dropbox-files-put (token path data &rest params &key overwrite parent_rev locale)
   "Uploads a file."
-  (with-url (url +content-url+ :path (end-point "files" path))
+  (declare (ignorable overwrite parent_rev locale))
+  (with-url (url +content-url+ :path (end-point "files_put" path) :query (query-params params))
     (dropbox-request 'metadata "PUT" url token :data data)))
 
 (defun dropbox-media (token path)
@@ -214,17 +233,24 @@
   (with-url (url +api-url+ :path (end-point "metadata" path))
     (dropbox-request 'metadata "GET" url token)))
 
+(defun dropbox-move (token from-path to-path)
+  "Deletes a file or folder."
+  (let ((query `(("root" ,(string-downcase *app-root*)) ("from_path" ,from-path) ("to_path" ,to-path))))
+    (with-url (url +api-url+ :path (end-point "/fileops/move") :query query)
+      (dropbox-request 'metadata "POST" url token))))
+
 (defun dropbox-revisions (token path)
   "Obtains metadata for the previous revisions of a file."
   (with-url (url +api-url+ :path (end-point "revisions" path))
-    (dropbox-request 'revision "GET" url token)))
+    (dropbox-request 'metadata "GET" url token)))
 
 (defun dropbox-shares (token path)
   "Creates and returns a Dropbox link to files or folders."
   (with-url (url +api-url+ :path (end-point "shares" path))
-    (dropbox-request 'shares "POST" url token)))
+    (dropbox-request 'media "POST" url token)))
 
-(defun dropbox-thumbnails (token path &key (format "jpeg") (size "s"))
+(defun dropbox-thumbnails (token path &rest params &key (format "jpeg") (size "s"))
   "Gets a thumbnail image."
-  (with-url (url +content-url+ :path (end-point "thumbnails" path) :query `(("format" ,format) ("size" ,size)))
+  (declare (ignorable format size))
+  (with-url (url +content-url+ :path (end-point "thumbnails" path) :query (query-params params))
     (http-get url :headers (list (auth-header token)))))
