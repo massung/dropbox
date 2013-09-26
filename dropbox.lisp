@@ -33,6 +33,8 @@
 
    ;; REST API end-points
    #:dropbox-account-info
+   #:dropbox-chunked-upload
+   #:dropbox-commit-chunked-upload
    #:dropbox-copy
    #:dropbox-copy-ref
    #:dropbox-create-folder
@@ -109,7 +111,13 @@
   ((|access_token| :reader access-token)
    (|uid|          :reader access-token-uid)
    (|token_type|   :reader access-token-type))
-  (:documentation "Returned by REQUEST-ACCESS function."))
+  (:documentation "Returned by dropbox-request-access."))
+
+(defclass chunked-upload ()
+  ((|upload_id| :reader chunked-upload-id)
+   (|offset|    :reader chunked-upload-offset)
+   (|expires|   :reader chunked-upload-expires))
+  (:documentation "Returned by dropbox-chunked-upload."))
 
 (defclass quota-info ()
   ((|datastores| :reader quota-datastores)
@@ -212,14 +220,29 @@
   (with-url (url +api-url+ :path (end-point "account/info"))
     (dropbox-request 'account-info "GET" url token)))
 
+(defun dropbox-chunked-upload (token &optional upload)
+  "Uploads large files to Dropbox in multiple chunks."
+  (let ((query (when upload
+                 `(("upload_id" ,(chunked-upload-id upload))
+                   ("offset" ,(chunked-upload-offset upload))))))
+    (with-url (url +content-url+ :path (end-point "chunked_upload") :query query)
+      (dropbox-request 'chunked-upload "PUT" url token))))
+
+(defun dropbox-commit-chunked-upload (token upload &rest params &key parent_rev overwrite locale)
+  "Completes an upload initiated by dropbox-chunked-upload."
+  (declare (ignore parent_rev overwrite locale))
+  (let ((query `("upload_id" ,(chunked-upload-id upload) ,@params)))
+    (with-url (url +content-url+ :path (end-point "commit_chunked_upload") :query (query-params query))
+      (dropbox-request 'metadata "POST" url token))))
+
 (defun dropbox-copy (token from to-path &rest params &key locale)
   "Copies a file or folder to a new location."
   (declare (ignore locale))
   (let* ((from (if (stringp from)
                    (list "from_path" from)
                  (list "from_copy_ref" (copy-ref from))))
-         (query `(("root" ,(string-downcase *app-root*)) ("to_path" ,to-path) ,from ,@params)))
-    (with-url (url +api-url+ :path (end-point "fileops/copy") :query query)
+         (query `("root" ,(string-downcase *app-root*) "to_path" ,to-path ,@from ,@params)))
+    (with-url (url +api-url+ :path (end-point "fileops/copy") :query (query-params query))
       (dropbox-request 'metadata "POST" url token))))
 
 (defun dropbox-copy-ref (token path)
