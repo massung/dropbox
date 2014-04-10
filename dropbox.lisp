@@ -269,7 +269,7 @@
     (let ((resp (http-get url :headers (list (auth-header token)))))
       (when (= (response-code resp) 200)
         (with-headers ((metadata "x-dropbox-metadata"))
-            (response-headers resp)
+            resp
           (values (response-body resp)
                   (when metadata
                     (json-decode-into 'metadata metadata))))))))
@@ -329,7 +329,7 @@
     (let ((resp (http-get url :headers (list (auth-header token)))))
       (if (= (response-code resp) 200)
           (with-headers ((metadata "x-dropbox-metadata"))
-              (response-headers resp)
+              resp
             (let ((bytes (map '(vector (unsigned-byte 8)) #'char-code (response-body resp))))
               (values bytes (json-decode-into 'metadata metadata))))
         (error (json-decode-into 'dropbox-error (response-body resp)))))))
